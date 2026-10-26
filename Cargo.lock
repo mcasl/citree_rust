@@ -23,6 +23,7 @@ dependencies = [
  "numpy",
  "pretty_assertions",
  "pyo3",
+ "pyo3-build-config",
  "thiserror",
 ]
 

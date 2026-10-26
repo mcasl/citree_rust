@@ -26,6 +26,9 @@ thiserror = "2.0"
 [dev-dependencies]
 pretty_assertions = "1.4"
 
+[build-dependencies]
+pyo3-build-config = { version = "0.30", features = ["resolve-config"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

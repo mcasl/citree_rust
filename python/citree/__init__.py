@@ -31,7 +31,9 @@ from sklearn.cluster import KMeans
 from matplotlib import pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from math import log
-import citree_rust as ct
+
+from . import _rust as ct
+from ._rust import __version__
 
 # define distribution as a new type consisting of the three possible distributions
 # the quotes are needed to avoid circular imports (porque se definen más abajo)
@@ -45,11 +47,11 @@ class Node:
         self,
         id: float,  # id is a float to allow decimal notation
         height: float,  # height of the node
-        count: int,
-        left_child: Optional[Node],  # left child
-        right_child: Optional[Node],  # right child
-        bin: Optional[Bin] = None,
-    ) -> None:  # bin associated with the node
+        count: int = 1,  # number of observations represented by the node
+        left_child: Optional[Node] = None,  # left child
+        right_child: Optional[Node] = None,  # right child
+        bin: Optional[Bin] = None,  # bin associated with the node
+    ) -> None:
         self.id = id
         self.height = height
         self.count = count
@@ -391,10 +393,102 @@ def hierarchical_clustering(
     return bins, linkage_matrix
 
 
+# ------------------------ Rust-accelerated hierarchical clustering ------------------------
+
+
+def _normal_bin_to_rust(bin: NormalBin) -> ct.NormalNode:
+    node = bin.node
+    return ct.NormalNode(
+        id=int(node.id),
+        height=float(node.height),
+        count=int(node.count),
+        x=np.asarray(bin.x, dtype=np.float64),
+        v=np.asarray(bin.V, dtype=np.float64),
+        inv_v=np.asarray(bin.inv_V, dtype=np.float64),
+    )
+
+
+def _poisson_bin_to_rust(bin: PoissonBin) -> ct.PoissonNode:
+    node = bin.node
+    return ct.PoissonNode(
+        id=int(node.id),
+        height=float(node.height),
+        count=int(node.count),
+        n=float(bin.n),
+        total=float(bin.N),
+        ln_n_over_total=float(bin.ln_n_over_N),
+    )
+
+
+def _multinomial_bin_to_rust(bin: MultinomialBin) -> ct.MultinomialNode:
+    node = bin.node
+    return ct.MultinomialNode(
+        id=int(node.id),
+        height=float(node.height),
+        count=int(node.count),
+        n=np.asarray(bin.n, dtype=np.float64),
+        total=float(bin.N),
+        ln_n_over_total=np.asarray(bin.ln_n_over_N, dtype=np.float64),
+    )
+
+
+def _normal_node_from_rust(node: ct.NormalNode) -> NormalBin:
+    left = None if node.left_child is None else _normal_node_from_rust(node.left_child).node
+    right = None if node.right_child is None else _normal_node_from_rust(node.right_child).node
+    return NormalBin(
+        node=Node(id=node.id, height=node.height, count=node.count,
+                  left_child=left, right_child=right),
+        x=node.x,
+        V=node.v,
+        inv_V=node.inv_v,
+    )
+
+
+def _poisson_node_from_rust(node: ct.PoissonNode) -> PoissonBin:
+    left = None if node.left_child is None else _poisson_node_from_rust(node.left_child).node
+    right = None if node.right_child is None else _poisson_node_from_rust(node.right_child).node
+    return PoissonBin(
+        node=Node(id=node.id, height=node.height, count=node.count,
+                  left_child=left, right_child=right),
+        n=node.n,
+        N=node.total,
+    )
+
+
+def _multinomial_node_from_rust(node: ct.MultinomialNode) -> MultinomialBin:
+    left = None if node.left_child is None else _multinomial_node_from_rust(node.left_child).node
+    right = None if node.right_child is None else _multinomial_node_from_rust(node.right_child).node
+    return MultinomialBin(
+        node=Node(id=node.id, height=node.height, count=node.count,
+                  left_child=left, right_child=right),
+        n=node.n,
+    )
+
+
+_rust_strategies = {
+    "normal": (_normal_bin_to_rust, ct.cluster_normal_bins, _normal_node_from_rust),
+    "poisson": (_poisson_bin_to_rust, ct.cluster_poisson_bins, _poisson_node_from_rust),
+    "multinomial": (
+        _multinomial_bin_to_rust,
+        ct.cluster_multinomial_bins,
+        _multinomial_node_from_rust,
+    ),
+}
+
+
 def hierarchical_clustering_rust(
-    bins: List[Bin],
+    bins: List[Bin], strategy: str = "normal"
 ) -> Tuple[List[Bin], ndarray]:
-    return ct.cluster_normal_bins(bins)
+    """Rust implementation of :func:`hierarchical_clustering`.
+
+    ``bins`` must be leaf bins with consecutive ids ``0..n-1``. Returns the same
+    ``([root_bin], linkage_matrix)`` pair as the Python version. Note that the Rust
+    core stores the cumulative node height (``h_s + h_t + d_s_t``) in the third
+    column of the linkage matrix and the number of observations in the fourth.
+    """
+    to_rust, cluster, from_rust = _rust_strategies[strategy]
+    linkage_matrix, root = cluster([to_rust(bin) for bin in bins])
+    return [from_rust(root)], linkage_matrix
 
 
 # ------------------------ Plot dendrogram ------------------------

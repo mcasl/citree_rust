@@ -1,56 +1,41 @@
+//! Python bindings (PyO3 + rust-numpy) for the CiTree node types and clustering functions.
+
 use crate::{
-    //cluster_multinomial_nodes,
-    cluster_bins,
-    multinomial::MultinomialNode as MultinomialNodeRust,
-    normal::NormalNode as NormalNodeRust,
-    poisson::PoissonNode as PoissonNodeRust,
-    //cluster_poisson_nodes,
-    Node,
-    NodeCount,
-    NodeId,
+    Node, NodeCount, NodeId, cluster_bins, multinomial::MultinomialNode as MultinomialNodeRust,
+    normal::NormalNode as NormalNodeRust, poisson::PoissonNode as PoissonNodeRust,
 };
 
-use pyo3;
-use pyo3::types::PyModule;
-use std::ops::Deref;
-
-use pyo3::Py;
-use pyo3::PyResult;
-//use pyo3::prelude::*;
-use ndarray;
-use ndarray::prelude::*;
-use ndarray::Array2;
-use numpy::convert::IntoPyArray;
-
-use ndarray::Array1;
-
-use pyo3::conversion::FromPyObject;
+use ndarray::{Array1, Array2};
+use numpy::{AllowTypeChange, IntoPyArray, PyArray1, PyArray2, PyArrayLike1, PyArrayLike2};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
-
-use numpy;
-use numpy::pyo3::Python;
-use numpy::{PyArray1, PyArray2};
+use std::convert::Infallible;
 
 // -------------------------- Array1Wrapper --------------------------
 
+/// Owned 1-D `f64` array that converts to/from a NumPy array.
+///
+/// Extraction accepts any array-like (NumPy arrays of any numeric dtype, lists, tuples)
+/// and casts it to `float64`.
 #[derive(Debug, Clone)]
 pub struct Array1Wrapper(pub Array1<f64>);
 
-impl<'source> FromPyObject<'source> for Array1Wrapper {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        Python::with_gil(|py| {
-            let py_array = ob.extract::<Py<PyArray1<f64>>>()?;
-            let array = py_array.as_ref(py).readonly().as_array().to_owned();
-            Ok(Array1Wrapper(array))
-        })
+impl<'py> FromPyObject<'_, 'py> for Array1Wrapper {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        let array: PyArrayLike1<'py, f64, AllowTypeChange> = ob.extract()?;
+        Ok(Array1Wrapper(array.as_array().to_owned()))
     }
 }
 
-impl IntoPy<PyObject> for Array1Wrapper {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        PyArray1::from_vec(py, self.0.to_vec()).into()
+impl<'py> IntoPyObject<'py> for Array1Wrapper {
+    type Target = PyArray1<f64>;
+    type Output = Bound<'py, Self::Target>;
+    type Error = Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(self.0.into_pyarray(py))
     }
 }
 
@@ -60,24 +45,28 @@ impl From<Array1Wrapper> for Array1<f64> {
     }
 }
 
-// -------------------------- Array2Wrapper
+// -------------------------- Array2Wrapper --------------------------
 
+/// Owned 2-D `f64` array that converts to/from a NumPy array.
 #[derive(Debug, Clone)]
 pub struct Array2Wrapper(pub Array2<f64>);
 
-impl<'source> FromPyObject<'source> for Array2Wrapper {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        Python::with_gil(|py| {
-            let py_array = ob.extract::<Py<PyArray2<f64>>>()?;
-            let array = py_array.as_ref(py).readonly().as_array().to_owned();
-            Ok(Array2Wrapper(array))
-        })
+impl<'py> FromPyObject<'_, 'py> for Array2Wrapper {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        let array: PyArrayLike2<'py, f64, AllowTypeChange> = ob.extract()?;
+        Ok(Array2Wrapper(array.as_array().to_owned()))
     }
 }
 
-impl IntoPy<PyObject> for Array2Wrapper {
-    fn into_py(self, _py: Python<'_>) -> PyObject {
-        Python::with_gil(|py| self.0.into_pyarray(py).to_object(py))
+impl<'py> IntoPyObject<'py> for Array2Wrapper {
+    type Target = PyArray2<f64>;
+    type Output = Bound<'py, Self::Target>;
+    type Error = Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(self.0.into_pyarray(py))
     }
 }
 
@@ -87,66 +76,44 @@ impl From<Array2Wrapper> for Array2<f64> {
     }
 }
 
-// -------------------------- Box<PyNormalNode> --------------------------
+// -------------------------- Box<PyXxxNode> conversions --------------------------
 
-// A trait may be implemented for Box<T> in the same crate as T,
-// which the orphan rules prevent for other generic types.
+// Children are stored as `Option<Box<Self>>`. `Box` is a fundamental type, so the orphan
+// rules allow implementing PyO3's conversion traits for `Box<LocalType>` in this crate.
+macro_rules! impl_boxed_node_conversions {
+    ($node:ty) => {
+        impl<'py> IntoPyObject<'py> for Box<$node> {
+            type Target = $node;
+            type Output = Bound<'py, Self::Target>;
+            type Error = PyErr;
 
-impl IntoPy<PyObject> for Box<PyNormalNode> {
-    fn into_py(self, py: Python) -> PyObject {
-        let py_node = self.deref().clone();
-        py_node.into_py(py)
-    }
+            fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+                Bound::new(py, *self)
+            }
+        }
+
+        impl<'py> FromPyObject<'_, 'py> for Box<$node> {
+            type Error = PyErr;
+
+            fn extract(ob: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+                let node = ob.cast::<$node>()?;
+                Ok(Box::new(node.borrow().clone()))
+            }
+        }
+    };
 }
 
-impl FromPyObject<'_> for Box<PyNormalNode> {
-    fn extract(ob: &PyAny) -> PyResult<Self> {
-        Python::with_gil(|_py| {
-            let py_node = ob.extract::<PyNormalNode>()?;
-            Ok(Box::new(py_node))
-        })
-    }
-}
+impl_boxed_node_conversions!(PyNormalNode);
+impl_boxed_node_conversions!(PyPoissonNode);
+impl_boxed_node_conversions!(PyMultinomialNode);
 
-// -------------------------- Box<PyPoissonNode> --------------------------
-
-impl IntoPy<PyObject> for Box<PyPoissonNode> {
-    fn into_py(self, py: Python) -> PyObject {
-        let py_node = self.deref().clone();
-        py_node.into_py(py)
-    }
-}
-
-impl FromPyObject<'_> for Box<PyPoissonNode> {
-    fn extract(ob: &PyAny) -> PyResult<Self> {
-        Python::with_gil(|_py| {
-            let py_node = ob.extract::<PyPoissonNode>()?;
-            Ok(Box::new(py_node))
-        })
-    }
-}
-
-// -------------------------- Box<PyMultinomialNode> --------------------------
-
-impl IntoPy<PyObject> for Box<PyMultinomialNode> {
-    fn into_py(self, py: Python) -> PyObject {
-        let py_node = self.deref().clone();
-        py_node.into_py(py)
-    }
-}
-
-impl FromPyObject<'_> for Box<PyMultinomialNode> {
-    fn extract(ob: &PyAny) -> PyResult<Self> {
-        Python::with_gil(|_py| {
-            let py_node = ob.extract::<PyMultinomialNode>()?;
-            Ok(Box::new(py_node))
-        })
-    }
+fn child_id<T>(child: &Option<Box<T>>, id: impl Fn(&T) -> usize) -> Option<usize> {
+    child.as_deref().map(id)
 }
 
 // -------------------------- PyNormalNode --------------------------
 
-#[pyclass(name = "NormalNode")]
+#[pyclass(name = "NormalNode", module = "citree._rust", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyNormalNode {
     #[pyo3(get)]
@@ -174,13 +141,11 @@ pub struct PyNormalNode {
     inv_v: Array2Wrapper,
 }
 
-// -------------------------- NormalNodePy Methods
 #[pymethods]
 impl PyNormalNode {
     #[new]
-    #[pyo3(
-        signature = (id, height, count, x, v, inv_v, left_child=None, right_child=None)
-    )]
+    #[pyo3(signature = (id, height, count, x, v, inv_v, left_child=None, right_child=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: usize,
         height: f64,
@@ -204,47 +169,30 @@ impl PyNormalNode {
     }
 
     pub fn __repr__(&self) -> String {
-        let left_id = match &self.left_child {
-            Some(boxed_node) => boxed_node.id.to_string(),
-            None => "None".to_string(),
-        };
-
-        let right_id = match &self.right_child {
-            Some(boxed_node) => boxed_node.id.to_string(),
-            None => "None".to_string(),
-        };
-
         format!(
-            "Normal Node {{ id: {}, height: {}, count: {}, left_child_id: {:?}, right_child_id: {:?} }}",
-            self.id, self.height, self.count, left_id, right_id
+            "NormalNode(id={}, height={}, count={}, left_child_id={:?}, right_child_id={:?})",
+            self.id,
+            self.height,
+            self.count,
+            child_id(&self.left_child, |n| n.id),
+            child_id(&self.right_child, |n| n.id),
         )
-    }
-
-    pub fn __str__(&self) -> String {
-        self.__repr__()
     }
 }
 
 impl From<NormalNodeRust> for PyNormalNode {
     fn from(node: NormalNodeRust) -> Self {
-        let left_child = match node.get_left_child() {
-            Some(boxed_python_node) => Some(Box::new(PyNormalNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
-
-        let right_child = match node.get_right_child() {
-            Some(boxed_python_node) => Some(Box::new(PyNormalNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
+        let left_child = node
+            .get_left_child()
+            .map(|child| Box::new(PyNormalNode::from(child.clone())));
+        let right_child = node
+            .get_right_child()
+            .map(|child| Box::new(PyNormalNode::from(child.clone())));
 
         PyNormalNode::new(
-            node.get_id().0,
+            *node.get_id(),
             node.get_height(),
-            node.get_count().0,
+            *node.get_count(),
             Array1Wrapper(node.get_x().clone()),
             Array2Wrapper(node.get_v().clone()),
             Array2Wrapper(node.get_inv_v().clone()),
@@ -256,32 +204,26 @@ impl From<NormalNodeRust> for PyNormalNode {
 
 impl From<PyNormalNode> for NormalNodeRust {
     fn from(py_node: PyNormalNode) -> Self {
-        let rust_left_child = match py_node.left_child {
-            Some(boxed_python_node) => Some(Box::new(NormalNodeRust::from(*boxed_python_node))),
-            None => None,
-        };
-
-        let rust_right_child = match py_node.right_child {
-            Some(boxed_python_node) => Some(Box::new(NormalNodeRust::from(*boxed_python_node))),
-            None => None,
-        };
-
         NormalNodeRust::new(
             NodeId(py_node.id),
             py_node.height,
             NodeCount(py_node.count),
-            rust_left_child,
-            rust_right_child,
-            ArrayBase::from(py_node.x),
-            ArrayBase::from(py_node.v),
-            ArrayBase::from(py_node.inv_v),
+            py_node
+                .left_child
+                .map(|child| Box::new(NormalNodeRust::from(*child))),
+            py_node
+                .right_child
+                .map(|child| Box::new(NormalNodeRust::from(*child))),
+            py_node.x.into(),
+            py_node.v.into(),
+            py_node.inv_v.into(),
         )
     }
 }
 
-// -------------------------- PoissonNodePy
+// -------------------------- PyPoissonNode --------------------------
 
-#[pyclass(name = "PyPoissonNode")]
+#[pyclass(name = "PoissonNode", module = "citree._rust", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyPoissonNode {
     #[pyo3(get)]
@@ -309,11 +251,11 @@ pub struct PyPoissonNode {
     pub ln_n_over_total: f64,
 }
 
-// ------- PoissonNodePy methods
 #[pymethods]
 impl PyPoissonNode {
     #[new]
     #[pyo3(signature = (id, height, count, n, total, ln_n_over_total, left_child=None, right_child=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: usize,
         height: f64,
@@ -338,32 +280,32 @@ impl PyPoissonNode {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "Poisson Node {{ id: {}, height: {}, count: {}, left_child: {:?}, right_child: {:?}, n: {}, total: {}, ln_n_over_total: {} }}",
-            self.id, self.height, self.count, self.left_child, self.right_child, self.n, self.total, self.ln_n_over_total
+            "PoissonNode(id={}, height={}, count={}, left_child_id={:?}, right_child_id={:?}, n={}, total={}, ln_n_over_total={})",
+            self.id,
+            self.height,
+            self.count,
+            child_id(&self.left_child, |n| n.id),
+            child_id(&self.right_child, |n| n.id),
+            self.n,
+            self.total,
+            self.ln_n_over_total
         )
     }
 }
 
 impl From<PoissonNodeRust> for PyPoissonNode {
     fn from(node: PoissonNodeRust) -> Self {
-        let left_child = match node.get_left_child() {
-            Some(boxed_python_node) => Some(Box::new(PyPoissonNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
-
-        let right_child = match node.get_right_child() {
-            Some(boxed_python_node) => Some(Box::new(PyPoissonNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
+        let left_child = node
+            .get_left_child()
+            .map(|child| Box::new(PyPoissonNode::from(child.clone())));
+        let right_child = node
+            .get_right_child()
+            .map(|child| Box::new(PyPoissonNode::from(child.clone())));
 
         PyPoissonNode::new(
-            node.get_id().0,
+            *node.get_id(),
             node.get_height(),
-            node.get_count().0,
+            *node.get_count(),
             node.get_n(),
             node.get_total(),
             node.get_ln_n_over_total(),
@@ -375,22 +317,16 @@ impl From<PoissonNodeRust> for PyPoissonNode {
 
 impl From<PyPoissonNode> for PoissonNodeRust {
     fn from(py_node: PyPoissonNode) -> Self {
-        let rust_left_child = match py_node.left_child {
-            Some(boxed_python_node) => Some(Box::new(PoissonNodeRust::from(*boxed_python_node))),
-            None => None,
-        };
-
-        let rust_right_child = match py_node.right_child {
-            Some(boxed_python_node) => Some(Box::new(PoissonNodeRust::from(*boxed_python_node))),
-            None => None,
-        };
-
         PoissonNodeRust::new(
             NodeId(py_node.id),
             py_node.height,
             NodeCount(py_node.count),
-            rust_left_child,
-            rust_right_child,
+            py_node
+                .left_child
+                .map(|child| Box::new(PoissonNodeRust::from(*child))),
+            py_node
+                .right_child
+                .map(|child| Box::new(PoissonNodeRust::from(*child))),
             py_node.n,
             py_node.total,
             py_node.ln_n_over_total,
@@ -398,9 +334,9 @@ impl From<PyPoissonNode> for PoissonNodeRust {
     }
 }
 
-// -------------------------- MultinomialNodePy
+// -------------------------- PyMultinomialNode --------------------------
 
-#[pyclass(name = "MultinomialNode")]
+#[pyclass(name = "MultinomialNode", module = "citree._rust", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMultinomialNode {
     #[pyo3(get)]
@@ -428,11 +364,11 @@ pub struct PyMultinomialNode {
     ln_n_over_total: Array1Wrapper,
 }
 
-// -------------------------- MultinomialNodePy methods
 #[pymethods]
 impl PyMultinomialNode {
     #[new]
     #[pyo3(signature = (id, height, count, n, total, ln_n_over_total, left_child=None, right_child=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: usize,
         height: f64,
@@ -442,7 +378,7 @@ impl PyMultinomialNode {
         ln_n_over_total: Array1Wrapper,
         left_child: Option<Box<PyMultinomialNode>>,
         right_child: Option<Box<PyMultinomialNode>>,
-    ) -> PyMultinomialNode {
+    ) -> Self {
         PyMultinomialNode {
             id,
             height,
@@ -455,40 +391,33 @@ impl PyMultinomialNode {
         }
     }
 
-    pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!(
-            "Multinomial Node: {{ id: {}, height: {}, count: {}, left child: {:?}, right child: {:?}, n: {:?}, total: {} }}",
+    pub fn __repr__(&self) -> String {
+        format!(
+            "MultinomialNode(id={}, height={}, count={}, left_child_id={:?}, right_child_id={:?}, n={}, total={})",
             self.id,
             self.height,
             self.count,
-            self.left_child.as_ref().map_or(None, |node| Some(node.id)),
-            self.right_child.as_ref().map_or(None, |node| Some(node.id)),
-            self.n,
+            child_id(&self.left_child, |n| n.id),
+            child_id(&self.right_child, |n| n.id),
+            self.n.0,
             self.total
-        ))
+        )
     }
 }
 
 impl From<MultinomialNodeRust> for PyMultinomialNode {
     fn from(node: MultinomialNodeRust) -> Self {
-        let left_child = match node.get_left_child() {
-            Some(boxed_python_node) => Some(Box::new(PyMultinomialNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
-
-        let right_child = match node.get_right_child() {
-            Some(boxed_python_node) => Some(Box::new(PyMultinomialNode::from(
-                boxed_python_node.deref().clone(),
-            ))),
-            None => None,
-        };
+        let left_child = node
+            .get_left_child()
+            .map(|child| Box::new(PyMultinomialNode::from(child.clone())));
+        let right_child = node
+            .get_right_child()
+            .map(|child| Box::new(PyMultinomialNode::from(child.clone())));
 
         PyMultinomialNode::new(
-            node.get_id().0,
+            *node.get_id(),
             node.get_height(),
-            node.get_count().0,
+            *node.get_count(),
             Array1Wrapper(node.get_n().clone()),
             node.get_total(),
             Array1Wrapper(node.get_ln_n_over_total().clone()),
@@ -500,85 +429,85 @@ impl From<MultinomialNodeRust> for PyMultinomialNode {
 
 impl From<PyMultinomialNode> for MultinomialNodeRust {
     fn from(py_node: PyMultinomialNode) -> Self {
-        let rust_left_child = match py_node.left_child {
-            Some(boxed_python_node) => {
-                Some(Box::new(MultinomialNodeRust::from(*boxed_python_node)))
-            }
-            None => None,
-        };
-
-        let rust_right_child = match py_node.right_child {
-            Some(boxed_python_node) => {
-                Some(Box::new(MultinomialNodeRust::from(*boxed_python_node)))
-            }
-            None => None,
-        };
-
         MultinomialNodeRust::new(
             NodeId(py_node.id),
             py_node.height,
             NodeCount(py_node.count),
-            rust_left_child,
-            rust_right_child,
-            ArrayBase::from(py_node.n),
+            py_node
+                .left_child
+                .map(|child| Box::new(MultinomialNodeRust::from(*child))),
+            py_node
+                .right_child
+                .map(|child| Box::new(MultinomialNodeRust::from(*child))),
+            py_node.n.into(),
             py_node.total,
-            ArrayBase::from(py_node.ln_n_over_total),
+            py_node.ln_n_over_total.into(),
         )
     }
 }
 
 // -------------------------- Python functions ----------------------------
 
+/// Runs the agglomerative clustering on Rust nodes without holding the Python
+/// thread state, and converts the result back to the Python node type.
+fn cluster_py<R, P>(py: Python<'_>, bins: Vec<P>, kind: &str) -> PyResult<(Array2Wrapper, P)>
+where
+    R: Node + Clone + From<P> + Send + Sync,
+    P: From<R>,
+{
+    let rust_bins: Vec<R> = bins.into_iter().map(R::from).collect();
+    let (linkage, dendrogram) = py
+        .detach(|| cluster_bins::<R>(&rust_bins))
+        .map_err(|e| PyRuntimeError::new_err(format!("Error clustering {kind} nodes: {e:#}")))?;
+    Ok((Array2Wrapper(linkage), P::from(dendrogram)))
+}
+
+/// Clusters Normal leaf nodes. Returns `(linkage_matrix, root_node)`.
 #[pyfunction]
 #[pyo3(name = "cluster_normal_bins")]
 pub fn cluster_normal_bins_py(
-    py: Python,
+    py: Python<'_>,
     bins: Vec<PyNormalNode>,
 ) -> PyResult<(Array2Wrapper, PyNormalNode)> {
-    let rustbins = bins.into_iter().map(NormalNodeRust::from).collect();
-    let (linkage_matrix, dendrogram) = cluster_bins::<NormalNodeRust>(&rustbins)
-        .map_err(|e| PyRuntimeError::new_err(format!("Error clustering normal nodes: {:?}", e)))?;
-    Ok((
-        Array2Wrapper(linkage_matrix),
-        PyNormalNode::from(dendrogram),
-    ))
+    cluster_py::<NormalNodeRust, _>(py, bins, "normal")
 }
 
+/// Clusters Poisson leaf nodes. Returns `(linkage_matrix, root_node)`.
 #[pyfunction]
 #[pyo3(name = "cluster_poisson_bins")]
 pub fn cluster_poisson_bins_py(
-    py: Python,
+    py: Python<'_>,
     bins: Vec<PyPoissonNode>,
 ) -> PyResult<(Array2Wrapper, PyPoissonNode)> {
-    let rustbins = bins.into_iter().map(PoissonNodeRust::from).collect();
-    let (linkage, dendrogram) = cluster_bins::<PoissonNodeRust>(&rustbins)
-        .map_err(|e| PyRuntimeError::new_err(format!("Error clustering normal nodes: {:?}", e)))?;
-    Ok((Array2Wrapper(linkage), PyPoissonNode::from(dendrogram)))
+    cluster_py::<PoissonNodeRust, _>(py, bins, "poisson")
 }
 
+/// Clusters Multinomial leaf nodes. Returns `(linkage_matrix, root_node)`.
 #[pyfunction]
 #[pyo3(name = "cluster_multinomial_bins")]
 pub fn cluster_multinomial_bins_py(
-    py: Python,
+    py: Python<'_>,
     bins: Vec<PyMultinomialNode>,
 ) -> PyResult<(Array2Wrapper, PyMultinomialNode)> {
-    let rustbins = bins.into_iter().map(MultinomialNodeRust::from).collect();
-    let (linkage, dendrogram) = cluster_bins::<MultinomialNodeRust>(&rustbins)
-        .map_err(|e| PyRuntimeError::new_err(format!("Error clustering normal nodes: {:?}", e)))?;
-    Ok((Array2Wrapper(linkage), PyMultinomialNode::from(dendrogram)))
+    cluster_py::<MultinomialNodeRust, _>(py, bins, "multinomial")
 }
 
 // -------------------------- PYTHON MODULE --------------------------
-#[pymodule]
-fn citree_rust(_py: Python, m: &PyModule) -> PyResult<()> {
+
+#[pymodule(name = "_rust")]
+fn citree_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<PyNormalNode>()?;
     m.add_class::<PyPoissonNode>()?;
     m.add_class::<PyMultinomialNode>()?;
+    // Backwards-compatible alias: the Poisson class used to be exported as `PyPoissonNode`.
+    m.add("PyPoissonNode", m.getattr("PoissonNode")?)?;
 
     // Functions
     m.add_function(wrap_pyfunction!(cluster_normal_bins_py, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_poisson_bins_py, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_multinomial_bins_py, m)?)?;
+
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

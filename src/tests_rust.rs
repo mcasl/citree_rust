@@ -3,6 +3,7 @@
 // ------------------------------------------------------------------------------------------- //
 
 #[cfg(test)]
+#[allow(clippy::approx_constant, clippy::unnecessary_cast)]
 mod tests {
 
     use ndarray::prelude::*;
@@ -14,10 +15,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::{
-        cluster_bins, create_nodepairs_sorted_list, get_whole_tree_ids,
-        multinomial::MultinomialNode, normal::NormalNode, poisson::PoissonNode,
-        pynodes::Array1Wrapper, pynodes::Array2Wrapper, pynodes::PyNormalNode, Node, NodeCount,
-        NodeId, NodePair,
+        Node, NodeCount, NodeId, NodePair, cluster_bins, create_nodepairs_sorted_list,
+        get_whole_tree_ids, multinomial::MultinomialNode, normal::NormalNode, poisson::PoissonNode,
+        pynodes::Array1Wrapper, pynodes::Array2Wrapper, pynodes::PyNormalNode,
     };
     use pyo3::prelude::*;
 
@@ -26,8 +26,8 @@ mod tests {
     #[test]
     fn test_convert_py_normal_node_to_box_py_normal_node() -> PyResult<()> {
         // create python code to create a PyNormalNode
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_normal_node = PyNormalNode::new(
                 1,
                 0.0,
@@ -39,13 +39,10 @@ mod tests {
                 None,
             );
 
-            let py_normal_node = py_normal_node.into_py(py);
+            let py_normal_node = py_normal_node.into_pyobject(py)?;
 
             //compare with assert eq py normal node id attribute with 1_usize
-            assert_eq!(
-                py_normal_node.getattr(py, "id")?.extract::<usize>(py)?,
-                1_usize
-            );
+            assert_eq!(py_normal_node.getattr("id")?.extract::<usize>()?, 1_usize);
 
             println!("py_normal_node: {:?}", py_normal_node);
 
@@ -179,7 +176,10 @@ mod tests {
             arr2(&[[0.5, 0.0], [0.0, 0.5]]),
         );
 
-        assert_eq!(normal_node.__repr__(), "Normal node { id: 1, height: 2, count: 1, left_child_id: Some(NodeId(3)), right_child_id: Some(NodeId(4)), x: [1.0, 1.0], shape=[2], strides=[1], layout=CFcf (0xf), const ndim=1, v: [[2.0, 0.0],\n [0.0, 2.0]], shape=[2, 2], strides=[2, 1], layout=Cc (0x5), const ndim=2, inv_v: [[0.5, 0.0],\n [0.0, 0.5]], shape=[2, 2], strides=[2, 1], layout=Cc (0x5), const ndim=2 }");
+        assert_eq!(
+            normal_node.__repr__(),
+            "Normal node { id: 1, height: 2, count: 1, left_child_id: Some(NodeId(3)), right_child_id: Some(NodeId(4)), x: [1.0, 1.0], shape=[2], strides=[1], layout=CFcf (0xf), const ndim=1, v: [[2.0, 0.0],\n [0.0, 2.0]], shape=[2, 2], strides=[2, 1], layout=Cc (0x5), const ndim=2, inv_v: [[0.5, 0.0],\n [0.0, 0.5]], shape=[2, 2], strides=[2, 1], layout=Cc (0x5), const ndim=2 }"
+        );
     }
 
     #[test]
@@ -343,7 +343,10 @@ mod tests {
             ]),
         );
 
-        assert_eq!(mnode.__repr__(), "Multinomial node { id: 42, height: 2, count: 1, left_child_id: Some(NodeId(12)), right_child_id: Some(NodeId(123)), n: [3.0, 7.0, 1.0], shape=[3], strides=[1], layout=CFcf (0xf), const ndim=1, total: 11, ln_n_over_total: [-1.2459866438544598, -0.6689809884656746, -2.3025850929940455], shape=[3], strides=[1], layout=CFcf (0xf), const ndim=1 }");
+        assert_eq!(
+            mnode.__repr__(),
+            "Multinomial node { id: 42, height: 2, count: 1, left_child_id: Some(NodeId(12)), right_child_id: Some(NodeId(123)), n: [3.0, 7.0, 1.0], shape=[3], strides=[1], layout=CFcf (0xf), const ndim=1, total: 11, ln_n_over_total: [-1.2459866438544598, -0.6689809884656746, -2.3025850929940455], shape=[3], strides=[1], layout=CFcf (0xf), const ndim=1 }"
+        );
     }
 
     #[test]

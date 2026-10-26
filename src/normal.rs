@@ -1,8 +1,7 @@
-use ndarray;
 use ndarray::{Array1, Array2};
-use ndarray_linalg::Inverse;
 
-use crate::{Error, Node, NodeCount, NodeId};
+use crate::linalg::inv;
+use crate::{Node, NodeCount, NodeId};
 use anyhow::Result;
 
 // -------------------------- NormalNode --------------------------
@@ -21,6 +20,7 @@ pub struct NormalNode {
 
 // Normal Node Methods
 impl NormalNode {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: NodeId,
         height: f64,
@@ -35,8 +35,8 @@ impl NormalNode {
             id,
             height,
             count,
-            left_child: left_child,
-            right_child: right_child,
+            left_child,
+            right_child,
             x,
             v,
             inv_v,
@@ -70,26 +70,20 @@ impl Node for NormalNode {
     }
 
     fn get_left_child(&self) -> Option<&Self> {
-        match self.left_child {
-            Some(ref left_child) => Some(left_child),
-            None => None,
-        }
+        self.left_child.as_ref().map(|x| x as _)
     }
 
     fn get_right_child(&self) -> Option<&Self> {
-        match self.right_child {
-            Some(ref right_child) => Some(right_child),
-            None => None,
-        }
+        self.right_child.as_ref().map(|x| x as _)
     }
 
     fn merge(&self, other: &Self, id: NodeId, distance: Option<f64>) -> Result<Self> {
         let inv_v_s_t = &self.inv_v + &other.inv_v;
-        let v_s_t = inv_v_s_t.inv()?;
+        let v_s_t = inv(&inv_v_s_t)?;
 
         let distance = match distance {
             Some(d) => d,
-            None => self.distance(&other)?,
+            None => self.distance(other)?,
         };
 
         Ok(NormalNode::new(
@@ -106,7 +100,7 @@ impl Node for NormalNode {
 
     fn distance(&self, other: &Self) -> Result<f64> {
         let diff = &self.x - &other.x;
-        let combined_v = (&self.inv_v + &other.inv_v).inv()?;
+        let combined_v = inv(&(&self.inv_v + &other.inv_v))?;
         let distance = diff.t().dot(&combined_v).dot(&diff);
         Ok(distance)
     }
@@ -114,7 +108,14 @@ impl Node for NormalNode {
     fn __repr__(&self) -> String {
         format!(
             "Normal node {{ id: {}, height: {}, count: {}, left_child_id: {:?}, right_child_id: {:?}, x: {:?}, v: {:?}, inv_v: {:?} }}",
-            self.id, self.height, self.count, self.get_left_child_id(), self.get_right_child_id(), self.x, self.v, self.inv_v
+            self.id,
+            self.height,
+            self.count,
+            self.get_left_child_id(),
+            self.get_right_child_id(),
+            self.x,
+            self.v,
+            self.inv_v
         )
     }
 

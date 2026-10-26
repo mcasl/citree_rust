@@ -1,7 +1,5 @@
-use ndarray;
 use ndarray::Array2;
 
-use anyhow;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
@@ -10,6 +8,7 @@ use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use thiserror::Error;
+mod linalg;
 mod multinomial;
 mod normal;
 mod poisson;
@@ -111,16 +110,13 @@ pub trait Node {
                 (None, None) => {
                     leaves.push(node.get_id());
                 }
-                (Some(_), None) => {
-                    Error::SingleChildNode(node.get_id());
-                }
-                (None, Some(_)) => {
-                    Error::SingleChildNode(node.get_id());
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(Error::SingleChildNode(node.get_id()));
                 }
 
                 (Some(left), Some(right)) => {
-                    stack.push(&left);
-                    stack.push(&right);
+                    stack.push(left);
+                    stack.push(right);
                 }
             }
         }
@@ -177,13 +173,15 @@ impl<T: Node + Clone> Eq for NodePair<T> {}
 // implemented in reverse order to get a min heap
 impl<T: Node + Clone> PartialOrd for NodePair<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.distance.partial_cmp(&self.distance)
+        Some(self.cmp(other))
     }
 }
 
 impl<T: Node + Clone> Ord for NodePair<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.distance.partial_cmp(&self.distance).unwrap()
+        // Reversed so that `BinaryHeap` (a max-heap) pops the closest pair first.
+        // `total_cmp` keeps this a total order even if a distance is NaN.
+        other.distance.total_cmp(&self.distance)
     }
 }
 
@@ -240,7 +238,7 @@ fn check_node_list<N: Node>(nodes: &[N]) -> Result<(), Error> {
     Ok(())
 }
 // This function creates a list of node pairs, sorted by distance, without repetition.
-fn create_nodepairs_sorted_list<'a, N: Node + Clone>(
+fn create_nodepairs_sorted_list<N: Node + Clone>(
     nodes: &[N],
 ) -> Result<BinaryHeap<NodePair<N>>, anyhow::Error> {
     let mut nodepairs_sorted_list: BinaryHeap<NodePair<N>> = BinaryHeap::new();
@@ -264,15 +262,15 @@ impl<N: Node> RemoveNode<N> for Vec<N> {
     }
 }
 
-pub fn cluster_bins<N: Node + Clone>(bins: &Vec<N>) -> Result<(Array2<f64>, N), anyhow::Error> {
+pub fn cluster_bins<N: Node + Clone>(bins: &[N]) -> Result<(Array2<f64>, N), anyhow::Error> {
     check_node_list(bins)?;
     let number_of_leaves = bins.len();
     let expected_number_of_nodes = 2 * number_of_leaves - 1;
 
     let mut linkage_matrix = Array2::<f64>::zeros((number_of_leaves - 1, 4));
-    let mut sorted_nodepairs: BinaryHeap<NodePair<N>> = create_nodepairs_sorted_list(&bins)?;
+    let mut sorted_nodepairs: BinaryHeap<NodePair<N>> = create_nodepairs_sorted_list(bins)?;
     let mut bins_copy = Vec::<N>::with_capacity(expected_number_of_nodes);
-    bins_copy.extend(bins.iter().map(|node| node.clone()));
+    bins_copy.extend(bins.iter().cloned());
 
     let mut closest_pair: NodePair<N>;
     let mut fusion_node_option: Option<N> = None;
@@ -296,13 +294,10 @@ pub fn cluster_bins<N: Node + Clone>(bins: &Vec<N>) -> Result<(Array2<f64>, N), 
 
         // retain in sorted_nodepairs those nodes not in (node_s_id, node_t_id) and add fusion_node to nodes_copy
         // but retain method is yet experimental as of 2023-05-04
-        sorted_nodepairs = sorted_nodepairs
-            .into_iter()
-            .filter(|nodepair| -> bool {
-                let (id_s, id_t) = nodepair.get_node_ids();
-                (id_s != node_s_id && id_s != node_t_id) && (id_t != node_s_id && id_t != node_t_id)
-            })
-            .collect();
+        sorted_nodepairs.retain(|nodepair| -> bool {
+            let (id_s, id_t) = nodepair.get_node_ids();
+            (id_s != node_s_id && id_s != node_t_id) && (id_t != node_s_id && id_t != node_t_id)
+        });
 
         // calculate new nodepairs for all nodes in nodes_copy (but fusion_node) with fusion_node. nodes_copy is already filtered
         fusion_new_nodepairs = bins_copy
@@ -315,9 +310,8 @@ pub fn cluster_bins<N: Node + Clone>(bins: &Vec<N>) -> Result<(Array2<f64>, N), 
 
         linkage_matrix[[current_id - number_of_leaves, 0]] = node_s_id.0 as f64;
         linkage_matrix[[current_id - number_of_leaves, 1]] = node_t_id.0 as f64;
-        linkage_matrix[[current_id - number_of_leaves, 2]] = (&fusion_node_inner).get_height();
-        linkage_matrix[[current_id - number_of_leaves, 3]] =
-            (&fusion_node_inner).get_count().0 as f64;
+        linkage_matrix[[current_id - number_of_leaves, 2]] = fusion_node_inner.get_height();
+        linkage_matrix[[current_id - number_of_leaves, 3]] = fusion_node_inner.get_count().0 as f64;
     }
 
     Ok((
@@ -326,6 +320,7 @@ pub fn cluster_bins<N: Node + Clone>(bins: &Vec<N>) -> Result<(Array2<f64>, N), 
     ))
 }
 
+#[cfg(test)]
 fn get_whole_tree_ids(node: impl Node) -> Vec<NodeId> {
     let mut stack = Vec::new();
     let mut tree_ids = Vec::new();

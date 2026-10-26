@@ -1,16 +1,54 @@
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "citree_python"
-requires-python = ">=3.7"
+name = "citree"
+version = "0.2.0"
+description = "CiTree: hierarchical clustering of subpopulations with a likelihood-ratio dissimilarity (Rust core + Python API)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Manuel Castejón Limas", email = "mcasl@unileon.es" }]
 classifiers = [
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-learn>=1.4",
+    "sortedcontainers>=2.4",
+    "matplotlib>=3.8",
 ]
 
+[project.urls]
+Repository = "https://github.com/mcasl/citree_rust"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pandas>=2.2",
+    "maturin>=1.9,<2.0",
+]
 
 [tool.maturin]
+# Python package lives in python/citree/, the Rust extension is exposed as citree._rust
+python-source = "python"
+module-name = "citree._rust"
 features = ["pyo3/extension-module"]
+
+[tool.uv]
+# Always re-run the Rust build when sources change (`uv sync`, `uv run`).
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+    { file = "python/**/*.py" },
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

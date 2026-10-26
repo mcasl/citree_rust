@@ -1,4 +1,3 @@
-use ndarray;
 use ndarray::Array1;
 
 use crate::{Node, NodeCount, NodeId};
@@ -21,6 +20,7 @@ pub struct MultinomialNode {
 // Multinomial Node Methods
 
 impl MultinomialNode {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: NodeId,
         height: f64,
@@ -108,7 +108,7 @@ impl Node for MultinomialNode {
 
         let distance = match distance {
             Some(d) => d,
-            None => self.distance(&other)?,
+            None => self.distance(other)?,
         };
 
         Ok(MultinomialNode::new(
@@ -126,7 +126,14 @@ impl Node for MultinomialNode {
     fn __repr__(&self) -> String {
         format!(
             "Multinomial node {{ id: {}, height: {}, count: {}, left_child_id: {:?}, right_child_id: {:?}, n: {:?}, total: {}, ln_n_over_total: {:?} }}",
-            self.id, self.height, self.count, self.get_left_child_id(), self.get_right_child_id(), self.n, self.total, self.ln_n_over_total
+            self.id,
+            self.height,
+            self.count,
+            self.get_left_child_id(),
+            self.get_right_child_id(),
+            self.n,
+            self.total,
+            self.ln_n_over_total
         )
     }
 }

@@ -1,15 +1,15 @@
 test_runner.sh
 
 /target
-/install
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 .pytest_cache/
 *.py[cod]
 
-# C extensions
+# C extensions (built by maturin into python/citree/)
 *.so
+*.pyd
 
 # Distribution / packaging
 .Python
@@ -74,13 +74,12 @@ docs/_build/
 # VSCode
 .vscode/
 
-# Pyenv
-.python-version
+# uv
+.venv/
 
 # Rust
 target/
 build/
-Cargo.lock
 .env/
 scratch.py
 cobertura.xml
